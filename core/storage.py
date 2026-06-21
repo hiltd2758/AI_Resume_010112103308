@@ -1,4 +1,3 @@
-"""Lưu trữ Job / CV / MatchResult bằng SQLite (Role: Hil - Lead)."""
 import sqlite3
 import json
 from core.config import DB_PATH
@@ -115,3 +114,21 @@ def get_match_result(cv_id, job_id):
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def delete_cv(cv_id):
+    """Xoá 1 CV, kèm xoá luôn các match_results liên quan tới CV đó."""
+    conn = get_conn()
+    conn.execute("DELETE FROM match_results WHERE cv_id = ?", (cv_id,))
+    conn.execute("DELETE FROM cvs WHERE id = ?", (cv_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_job(job_id):
+    """Xoá 1 Job, kèm xoá luôn các match_results liên quan tới Job đó."""
+    conn = get_conn()
+    conn.execute("DELETE FROM match_results WHERE job_id = ?", (job_id,))
+    conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+    conn.commit()
+    conn.close()

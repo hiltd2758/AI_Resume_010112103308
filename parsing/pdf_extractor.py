@@ -1,4 +1,3 @@
-"""Đọc file CV (PDF/Word) thành text thuần (Role: Hải)."""
 import pdfplumber
 from docx import Document
 

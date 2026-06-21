@@ -97,6 +97,30 @@ def reset_collection(collection: str):
         if os.path.exists(p):
             os.remove(p)
 
+def remove_by_ref_id(collection: str, ref_id):
+    """
+    Xoá 1 document khỏi vector store theo ref_id (vd: cv_id hoặc job_id).
+    FAISS IndexFlatIP không hỗ trợ xoá trực tiếp theo vị trí, nên phải
+    reconstruct lại toàn bộ vector còn giữ và build index mới.
+    """
+    index, metadata = load_index(collection)
+    if index is None:
+        return
+
+    keep_idx = [i for i, m in enumerate(metadata) if m.get("ref_id") != ref_id]
+    if len(keep_idx) == len(metadata):
+        return  # không tìm thấy ref_id này, không có gì để xoá
+
+    if not keep_idx:
+        reset_collection(collection)
+        return
+
+    vectors = [index.reconstruct(i).tolist() for i in keep_idx]
+    new_metadata = [metadata[i] for i in keep_idx]
+    dim = len(vectors[0])
+    new_index = faiss.IndexFlatIP(dim)
+    new_index.add(np.array(vectors, dtype="float32"))
+    save_index(collection, new_index, new_metadata)
 
 def collection_stats() -> dict:
     """Thống kê số document hiện có trong mỗi collection, để hiển thị debug/UI."""

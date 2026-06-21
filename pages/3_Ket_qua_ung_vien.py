@@ -1,4 +1,3 @@
-"""Trang chạy match + xem kết quả ứng viên (Role: Dũng, ghép logic Hil + Bá)."""
 import json
 import time
 import streamlit as st

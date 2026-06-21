@@ -1,7 +1,7 @@
 """Trang tạo Job Description (Role: Dũng)."""
 import streamlit as st
-from core.storage import add_job, list_jobs
-from rag.indexer import index_job
+from core.storage import add_job, list_jobs, delete_job
+from rag.indexer import index_job, delete_job_index
 
 st.title("💼 Tạo Job")
 
@@ -28,9 +28,18 @@ st.divider()
 st.subheader("Danh sách Job")
 jobs = list_jobs()
 if jobs:
-    st.dataframe(
-        [{"ID": j["id"], "Vị trí": j["title"], "Skill yêu cầu": j["required_skills"], "KN yêu cầu": j["required_experience_years"]} for j in jobs],
-        use_container_width=True,
-    )
+    for j in jobs:
+        col1, col2, col3, col4, col5 = st.columns([1, 3, 4, 2, 2])
+        col1.write(f"#{j['id']}")
+        col2.write(j["title"])
+        col3.write(j["required_skills"])
+        col4.write(f"{j['required_experience_years']} năm")
+        if col5.button("🗑️ Xoá", key=f"del_job_{j['id']}"):
+            delete_job(j["id"])
+            try:
+                delete_job_index(j["id"])
+            except Exception as e:
+                st.warning(f"Đã xoá Job nhưng chưa xoá được embedding trong RAG: {e}")
+            st.rerun()
 else:
     st.caption("Chưa có Job nào.")

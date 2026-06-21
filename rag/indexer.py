@@ -5,7 +5,7 @@ không cần biết chi tiết FAISS/embedding bên dưới.
 """
 from rag.embeddings import embed_text, embed_texts
 from rag.vector_store import add_documents, search
-
+from rag.vector_store import add_documents, search, remove_by_ref_id
 
 def index_cv(cv_id: int, candidate_name: str, raw_text: str):
     """Embed 1 CV và thêm vào vector store collection 'cv'."""
@@ -39,6 +39,14 @@ def search_jobs_for_cv(cv_text: str, top_k: int = 5) -> list[dict]:
     query_vector = embed_text(cv_text)
     return search("job", query_vector, top_k=top_k)
 
+def delete_cv_index(cv_id: int):
+    """Xoá embedding của 1 CV khỏi vector store (gọi khi xoá CV ở SQLite)."""
+    remove_by_ref_id("cv", cv_id)
+
+
+def delete_job_index(job_id: int):
+    """Xoá embedding của 1 Job khỏi vector store (gọi khi xoá Job ở SQLite)."""
+    remove_by_ref_id("job", job_id)
 
 def reindex_all():
     """

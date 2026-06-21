@@ -1,4 +1,3 @@
-"""Regex bắt số năm kinh nghiệm trong text CV (Role: Hải)."""
 import re
 
 PATTERNS = [

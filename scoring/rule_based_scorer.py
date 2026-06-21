@@ -1,4 +1,3 @@
-"""Tính % match cơ bản: skill 50% + kinh nghiệm 50% (Role: Bá)."""
 
 
 def score_skills(cv_skills: list[str], job_skills: list[str]) -> float:

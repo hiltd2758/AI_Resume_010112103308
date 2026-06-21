@@ -1,4 +1,3 @@
-"""Gọi Groq API để tinh chỉnh điểm + nhận xét + gợi ý câu hỏi PV (Role: Bá)."""
 import json
 import time
 from core.config import GROQ_API_KEY

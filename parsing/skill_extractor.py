@@ -1,4 +1,3 @@
-"""Rule-based: quét text tìm skill xuất hiện trong danh sách (Role: Hải)."""
 from core.config import SKILL_KEYWORDS
 
 
