@@ -4,6 +4,7 @@ from parsing.pdf_extractor import extract_text
 from parsing.skill_extractor import extract_skills
 from parsing.experience_extractor import extract_experience_years
 from core.storage import add_cv, list_cvs
+from rag.indexer import index_cv
 
 st.title("📤 Upload CV")
 
@@ -21,6 +22,10 @@ if submitted:
             skills = extract_skills(text)
             years = extract_experience_years(text)
             cv_id = add_cv(candidate_name, text, skills, years)
+            try:
+                index_cv(cv_id, candidate_name, text)
+            except Exception as e:
+                st.warning(f"Chưa tạo được embedding cho CV (sẽ không dùng được RAG search): {e}")
         st.success(f"Đã thêm CV #{cv_id} cho {candidate_name}")
         st.write("**Kỹ năng phát hiện:**", ", ".join(skills) if skills else "Không phát hiện")
         st.write("**Số năm kinh nghiệm phát hiện:**", years)

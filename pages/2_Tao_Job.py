@@ -1,6 +1,7 @@
 """Trang tạo Job Description (Role: Dũng)."""
 import streamlit as st
 from core.storage import add_job, list_jobs
+from rag.indexer import index_job
 
 st.title("💼 Tạo Job")
 
@@ -17,6 +18,10 @@ if submitted:
     else:
         skills_list = [s.strip() for s in required_skills.split(",") if s.strip()]
         job_id = add_job(title, description, skills_list, required_experience_years)
+        try:
+            index_job(job_id, title, description)
+        except Exception as e:
+            st.warning(f"Chưa tạo được embedding cho Job (sẽ không dùng được RAG search): {e}")
         st.success(f"Đã tạo Job #{job_id}: {title}")
 
 st.divider()
