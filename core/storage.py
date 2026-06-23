@@ -96,7 +96,7 @@ def save_match_result(cv_id, job_id, rule_based_score, final_score, pros, cons, 
 def list_results_by_job(job_id):
     conn = get_conn()
     rows = conn.execute(
-        """SELECT mr.*, c.candidate_name FROM match_results mr
+        """SELECT mr.*, c.candidate_name, c.skills FROM match_results mr
         JOIN cvs c ON c.id = mr.cv_id WHERE mr.job_id = ?
         ORDER BY mr.final_score DESC""",
         (job_id,),
