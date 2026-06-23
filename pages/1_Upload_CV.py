@@ -1,4 +1,3 @@
-"""Trang Upload CV (Role: Dũng, gọi service từ Hải)."""
 import streamlit as st
 from parsing.pdf_extractor import extract_text
 from parsing.skill_extractor import extract_skills

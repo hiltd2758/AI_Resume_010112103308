@@ -1,4 +1,4 @@
-"""Trang tạo Job Description (Role: Dũng)."""
+
 import streamlit as st
 from core.storage import add_job, list_jobs, delete_job
 from rag.indexer import index_job, delete_job_index
