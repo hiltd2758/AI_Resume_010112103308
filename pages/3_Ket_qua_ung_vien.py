@@ -4,7 +4,7 @@ import time
 import streamlit as st
 from core.storage import list_jobs, list_cvs, save_match_result, list_results_by_job, get_match_result
 from scoring.rule_based_scorer import calculate_rule_based_score
-from scoring.llm_recommender import get_llm_recommendation
+from scoring.llm_recommender import get_llm_recommendation, answer_question_about_job
 from scoring.skill_gap import missing_skills, skill_gap_score
 
 DELAY_BETWEEN_CALLS = 4  # giây, tránh dội request gây 429
@@ -35,6 +35,44 @@ with job_summary_col2:
     st.metric("Số kết quả hiện có", len(list_results_by_job(job["id"])))
 
 st.caption("Skill gap hiển thị mức độ đáp ứng kỹ năng JD của từng CV.")
+
+# ============================================================================
+# RAG: Hỏi đáp về Job này (retrieval Top-K CV liên quan + LLM trả lời)
+# ============================================================================
+st.divider()
+with st.expander("🔎 Hỏi đáp về Job này (RAG)", expanded=False):
+    st.caption(
+        "Đặt câu hỏi tự do, hệ thống sẽ tự tìm Top-K CV liên quan nhất tới Job này "
+        "(qua semantic search) rồi đưa cho LLM trả lời dựa trên ngữ cảnh đó."
+    )
+    rag_question = st.text_input(
+        "Câu hỏi của bạn",
+        placeholder="Ví dụ: Có CV nào có kinh nghiệm Docker không?",
+        key="rag_question_job",
+    )
+    rag_top_k = st.slider("Số CV liên quan lấy làm ngữ cảnh (Top-K)", 1, 10, 3, key="rag_top_k_job")
+
+    if st.button("Hỏi", key="rag_ask_job"):
+        if not rag_question.strip():
+            st.warning("Nhập câu hỏi trước khi bấm Hỏi.")
+        else:
+            with st.spinner("Đang tìm dữ liệu liên quan và hỏi LLM..."):
+                job_text = f"{job['title']}\n{job['description'] or ''}"
+                rag_result = answer_question_about_job(rag_question, job_text, top_k=rag_top_k)
+
+            if rag_result["retrieval_error"]:
+                st.warning(
+                    f"Không truy xuất được dữ liệu RAG ({rag_result['retrieval_error']}). "
+                    "Có thể model embedding chưa tải được hoặc chưa có CV nào được index."
+                )
+
+            st.write("**Trả lời:**")
+            st.write(rag_result["answer"])
+
+            if rag_result["retrieved"]:
+                st.write("**Nguồn tham khảo (Top-K CV liên quan):**")
+                for i, r in enumerate(rag_result["retrieved"], start=1):
+                    st.caption(f"[{i}] {r.get('name', 'Không rõ')} — score={r.get('score', 0):.3f}")
 
 if not cvs:
     st.info("Chưa có CV nào. Vui lòng vào trang Upload CV để thêm ứng viên.")
