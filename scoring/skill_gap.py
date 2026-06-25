@@ -1,315 +1,277 @@
+"""Deterministic Skill-Gap analysis for CV-JD matching.
 
-"""Skill-Gap Analysis Module
+This module compares candidate skills with job-required skills without using
+Streamlit, Groq, embeddings, or any external service.
 
-Analyzes the gap between a candidate's CV skills and job requirements.
-Provides metrics on matched skills, missing skills, and gap percentages
-and builds simple, rule-based recommendations for missing skills.
-
-Role: Hai (Backend Developer)
-Dependencies: Only `core.config.SKILL_RECOMMENDATIONS` for mapping (pure Python)
+`skill_gap_score` is kept for backward compatibility. It means the same thing
+as `coverage_score`: matched required skills / total required skills * 100.
+`missing_percent` is the actual percentage of missing required skills.
 """
 
-from core.config import SKILL_RECOMMENDATIONS
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+
+from core.config import SKILL_KEYWORDS, SKILL_RECOMMENDATIONS
 
 
-def build_recommendations(missing_skills, display_map=None):
-    """Build recommendation strings for missing skills.
+SKILL_ALIASES = {
+    "Python": ["Python"],
+    "Java": ["Java"],
+    "JavaScript": ["JavaScript"],
+    "React": ["React"],
+    "Node.js": ["Node.js", "NodeJS", "Node JS"],
+    "SQL": ["SQL"],
+    "FastAPI": ["FastAPI", "Fast API"],
+    "Spring Boot": ["Spring Boot", "SpringBoot"],
+    "Docker": ["Docker"],
+    "Git": ["Git"],
+    "TensorFlow": ["TensorFlow", "Tensor Flow"],
+    "Pandas": ["Pandas"],
+    "HTML": ["HTML", "HTML5"],
+    "CSS": ["CSS", "CSS3"],
+    "WordPress": ["WordPress", "Word Press"],
+    "PHP": ["PHP"],
+    "PHP-Fusion": ["PHP-Fusion", "PHP Fusion"],
+    "Concrete5": ["Concrete5", "Concrete 5"],
+    "AWS": ["AWS"],
+    "Linux": ["Linux"],
+    "NumPy": ["NumPy", "Numpy"],
+    "scikit-learn": ["scikit-learn", "Scikit Learn", "sklearn"],
+    "Machine Learning": ["Machine Learning"],
+    "PyTorch": ["PyTorch", "Pytorch"],
+    "Flask": ["Flask"],
+}
 
-    Args:
-        missing_skills (list[str]): Missing skills, typically normalized keys.
-        display_map (dict | None): Optional mapping normalized -> display text.
 
-    Returns:
-        list[str]: list of recommendation strings in the same order
+def _comparison_key(value: str) -> str:
+    """Chuẩn hóa key nội bộ để so sánh alias ổn định."""
+    value = re.sub(r"[\s._-]+", "", value.strip().casefold())
+    return value
+
+
+def _clean_skill(value: str) -> str:
+    """Làm sạch một skill đơn lẻ trước khi canonicalize."""
+    value = re.sub(r"\s+", " ", value.strip())
+    return value.strip(" ,;|/")
+
+
+ALIAS_TO_CANONICAL = {}
+for canonical_skill, aliases in SKILL_ALIASES.items():
+    ALIAS_TO_CANONICAL[_comparison_key(canonical_skill)] = canonical_skill
+    for alias in aliases:
+        ALIAS_TO_CANONICAL[_comparison_key(alias)] = canonical_skill
+
+
+def canonicalize_skill(skill: object) -> str | None:
+    """Return canonical display name for one skill, or None when invalid.
+
+    Comment tiếng Việt: hàm này không dùng substring, chỉ chuẩn hóa một giá trị
+    skill đã được tách sẵn để tránh nhầm `Java` với `JavaScript`.
     """
-    if display_map is None:
-        display_map = {}
+    if not isinstance(skill, str):
+        return None
 
-    recs = []
-    for s in missing_skills:
-        display = display_map.get(s, s)
-        if s in SKILL_RECOMMENDATIONS:
-            recs.append(SKILL_RECOMMENDATIONS[s])
+    cleaned_skill = _clean_skill(skill)
+    if not cleaned_skill:
+        return None
+
+    return ALIAS_TO_CANONICAL.get(_comparison_key(cleaned_skill), cleaned_skill)
+
+
+def normalize_skills(skills: object) -> list[str]:
+    """Normalize, canonicalize, and deduplicate skills while preserving order."""
+    if skills is None:
+        return []
+
+    if isinstance(skills, str):
+        raw_skills = re.split(r"[,;|\n]+", skills)
+    elif isinstance(skills, Iterable):
+        raw_skills = list(skills)
+    else:
+        raw_skills = []
+
+    normalized_skills = []
+    seen_keys = set()
+    for raw_skill in raw_skills:
+        canonical_skill = canonicalize_skill(raw_skill)
+        if canonical_skill is None:
+            continue
+
+        skill_key = _comparison_key(canonical_skill)
+        if skill_key in seen_keys:
+            continue
+
+        seen_keys.add(skill_key)
+        normalized_skills.append(canonical_skill)
+
+    return normalized_skills
+
+
+def _alias_pattern(alias: str) -> str:
+    """Tạo regex boundary để alias không match nhầm bên trong từ khác."""
+    escaped_chars = []
+    for char in alias:
+        if char.isspace():
+            escaped_chars.append(r"[\s._-]+")
+        elif char in {".", "-", "_"}:
+            escaped_chars.append(r"[\s._-]*")
         else:
-            # Fallback recommendation in Vietnamese (short actionable sentence)
-            recs.append(f"Bổ sung kiến thức và một project minh chứng cho kỹ năng: {display}.")
-    return recs
+            escaped_chars.append(re.escape(char))
+
+    return r"(?<![A-Za-z0-9])" + "".join(escaped_chars) + r"(?![A-Za-z0-9])"
 
 
-def analyze_skill_gap(cv_skills, job_skills):
-    """
-    Analyze skill gap between CV and job requirements.
-    
-    Compares two lists of skills (CV vs. Job) and identifies:
-    - Matched skills: Present in both
-    - Missing skills: Required by job but NOT in CV
-    - Additional skills: In CV but NOT required by job
-    
+TEXT_SKILL_PATTERNS = []
+for canonical_skill in SKILL_KEYWORDS:
+    canonical_name = canonicalize_skill(canonical_skill)
+    if canonical_name is None:
+        continue
+    aliases = SKILL_ALIASES.get(canonical_name, [canonical_name])
+    for alias in aliases:
+        TEXT_SKILL_PATTERNS.append((canonical_name, re.compile(_alias_pattern(alias), re.IGNORECASE)))
+
+
+def extract_skills_from_text(text: str | None) -> list[str]:
+    """Extract known skills from raw text with safe boundaries and aliases."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+
+    found_skills = []
+    seen_keys = set()
+    for canonical_skill, pattern in TEXT_SKILL_PATTERNS:
+        skill_key = _comparison_key(canonical_skill)
+        if skill_key in seen_keys:
+            continue
+        if pattern.search(text):
+            seen_keys.add(skill_key)
+            found_skills.append(canonical_skill)
+
+    return found_skills
+
+
+def _recommendation_key(skill: str) -> str:
+    """Đưa canonical skill về key tương thích với SKILL_RECOMMENDATIONS."""
+    return _comparison_key(skill)
+
+
+def build_recommendations(missing_skills: object, display_map: dict | None = None) -> list[dict]:
+    """Build structured recommendations for missing skills only."""
+    display_map = display_map or {}
+    recommendations = []
+    seen_keys = set()
+
+    for skill in normalize_skills(missing_skills):
+        skill_key = _comparison_key(skill)
+        if skill_key in seen_keys:
+            continue
+        seen_keys.add(skill_key)
+
+        display_skill = display_map.get(skill, skill)
+        recommendation_text = SKILL_RECOMMENDATIONS.get(
+            _recommendation_key(skill),
+            f"Bổ sung kiến thức nền tảng về {display_skill}, làm một bài thực hành nhỏ và đưa bằng chứng vào portfolio.",
+        )
+        recommendations.append(
+            {
+                "skill": display_skill,
+                "priority": "high",
+                "recommendation": recommendation_text,
+                "suggested_evidence": f"GitHub repository, project demo hoặc ghi chú học tập có sử dụng {display_skill}.",
+            }
+        )
+
+    return recommendations
+
+
+def _skill_key_map(skills: list[str]) -> dict[str, str]:
+    return {_comparison_key(skill): skill for skill in skills}
+
+
+def analyze_skill_gap(cv_skills, job_skills, cv_text=None, job_text=None):
+    """Analyze skill coverage between CV skills and job-required skills.
+
     Args:
-        cv_skills (list[str] or None): 
-            List of skills extracted from candidate's CV.
-            Example: ["Python", "SQL", "Docker"]
-            Can be None or empty.
-        
-        job_skills (list[str] or None): 
-            List of skills required by the job posting.
-            Example: ["Python", "AWS", "Docker"]
-            Can be None or empty.
-    
+        cv_skills (list[str] | str | None): Skills extracted from CV.
+        job_skills (list[str] | str | None): Skills required by the job.
+        cv_text (str | None): Optional raw CV text used to enrich missing parsed skills.
+        job_text (str | None): Optional raw JD text used to enrich missing parsed skills.
+
     Returns:
-        dict: Result dictionary with the following keys:
-            - matched_skills (list[str]): Skills present in both CV and job
-            - missing_skills (list[str]): Skills required but NOT in CV
-            - additional_skills (list[str]): Skills in CV but NOT required by job
-            - gap_count (int): Number of missing skills
-            - matched_count (int): Number of matched skills
-            - job_skills_total (int): Total number of required skills
-            - gap_percentage (float): (missing / total_required) * 100, rounded to 2 decimals
-            - matched_percentage (float): (matched / total_required) * 100, rounded to 2 decimals
-            - coverage_percentage (float): 100 - gap_percentage, rounded to 2 decimals
-    
-    Notes:
-        - All string comparisons are case-insensitive and whitespace-trimmed
-        - Duplicate skills are automatically deduplicated
-        - None or non-string values are filtered out
-        - Output lists are sorted alphabetically for deterministic behavior
-                - If job_skills_total is 0, the job has no requirements:
-                    missing_skills = [], skill_gap_score = 100.0,
-                    matched_percentage = 100.0, coverage_percentage = 100.0.
-    
-    Examples:
-        >>> result = analyze_skill_gap(
-        ...     ["Python", "SQL"], 
-        ...     ["Python", "SQL", "AWS"]
-        ... )
-        >>> result["gap_count"]
-        1
-        >>> result["gap_percentage"]
-        33.33
-        >>> result["matched_skills"]
-        ['python', 'sql']
-        
-        >>> result = analyze_skill_gap(
-        ...     ["PYTHON", "python", " Python "],  # Duplicates and case variations
-        ...     ["python"]
-        ... )
-        >>> result["matched_percentage"]
-        100.0
-        >>> len(result["matched_skills"])
-        1
+        dict: UI-ready result. Important fields:
+            - `skill_gap_score`: backward-compatible coverage percentage.
+            - `coverage_score`: clearer alias of the same coverage value.
+            - `missing_percent`: 100 - coverage_score.
+
+    Comment tiếng Việt: khi JD không có skill yêu cầu, coverage được quy ước là
+    100% vì không có kỹ năng bắt buộc nào bị thiếu.
     """
-    
-    # ============================================================================
-    # STEP 1: Input Validation & Normalization
-    # ============================================================================
-    
-    # Handle None inputs
-    if cv_skills is None:
-        cv_skills = []
-    if job_skills is None:
-        job_skills = []
-    
-    # Filter out None and non-string values
-    cv_skills = [
-        s for s in cv_skills 
-        if s is not None and isinstance(s, str)
-    ]
-    job_skills = [
-        s for s in job_skills 
-        if s is not None and isinstance(s, str)
-    ]
-    
-    # ============================================================================
-    # STEP 2: Normalize Skills (lowercase, strip whitespace, deduplicate)
-    # ============================================================================
-    
-    # Build first-occurrence display maps (normalized -> original casing)
-    cv_display = {}
-    for s in cv_skills:
-        if s is None or not isinstance(s, str):
-            continue
-        key = s.lower().strip()
-        if key not in cv_display:
-            cv_display[key] = s.strip()
+    cv_skills_normalized = normalize_skills(cv_skills)
+    job_skills_normalized = normalize_skills(job_skills)
 
-    job_display = {}
-    for s in job_skills:
-        if s is None or not isinstance(s, str):
-            continue
-        key = s.lower().strip()
-        if key not in job_display:
-            job_display[key] = s.strip()
+    if cv_text:
+        cv_skills_normalized = normalize_skills(cv_skills_normalized + extract_skills_from_text(cv_text))
+    if job_text:
+        job_skills_normalized = normalize_skills(job_skills_normalized + extract_skills_from_text(job_text))
 
-    cv_normalized = set(cv_display.keys())
-    job_normalized = set(job_display.keys())
-    
-    # ============================================================================
-    # STEP 3: Set Operations (intersection, difference)
-    # ============================================================================
-    
-    matched_norm = sorted(list(cv_normalized & job_normalized))
-    missing_norm = sorted(list(job_normalized - cv_normalized))
-    additional_norm = sorted(list(cv_normalized - job_normalized))
+    cv_skill_map = _skill_key_map(cv_skills_normalized)
+    job_skill_map = _skill_key_map(job_skills_normalized)
 
-    # Keep canonical (backwards-compatible) normalized lists (lowercased)
-    matched_skills = matched_norm
-    missing_skills = missing_norm
-    additional_skills = additional_norm
+    cv_keys = set(cv_skill_map)
+    job_keys = set(job_skill_map)
 
-    # Map normalized names back to display casing for UI consumption
-    def map_display(norm_list, preferred_map, fallback_map):
-        display_list = []
-        for k in norm_list:
-            if k in preferred_map:
-                display_list.append(preferred_map[k])
-            elif k in fallback_map:
-                display_list.append(fallback_map[k])
-            else:
-                display_list.append(k)
-        return display_list
+    matched_keys = [key for key in job_skill_map if key in cv_keys]
+    missing_keys = [key for key in job_skill_map if key not in cv_keys]
+    extra_keys = [key for key in cv_skill_map if key not in job_keys]
 
-    matched_skills_display = map_display(matched_norm, job_display, cv_display)
-    missing_skills_display = map_display(missing_norm, job_display, cv_display)
-    additional_skills_display = map_display(additional_norm, cv_display, job_display)
-    
-    # ============================================================================
-    # STEP 4: Calculate Metrics
-    # ============================================================================
-    
-    gap_count = len(missing_norm)
-    matched_count = len(matched_norm)
-    job_skills_total = len(job_normalized)
-    
-    # Calculate percentages (handle division by zero)
+    matched_skills = [job_skill_map[key] for key in matched_keys]
+    missing_skills = [job_skill_map[key] for key in missing_keys]
+    extra_skills = [cv_skill_map[key] for key in extra_keys]
+
+    matched_count = len(matched_skills)
+    gap_count = len(missing_skills)
+    job_skills_total = len(job_skills_normalized)
+
     if job_skills_total == 0:
-        gap_percentage = 0.0
-        matched_percentage = 100.0
-        coverage_percentage = 100.0
+        coverage_score = 100.0
+        status = "no_job_skills"
+        note = "Job không có kỹ năng yêu cầu; quy ước coverage là 100% vì không có skill nào bị thiếu."
     else:
-        gap_percentage = (gap_count / job_skills_total) * 100
-        matched_percentage = (matched_count / job_skills_total) * 100
-        coverage_percentage = 100 - gap_percentage
+        coverage_score = round((matched_count / job_skills_total) * 100, 2)
+        status = "ok"
+        note = ""
 
-    # Skill gap score: matched / required * 100; special-case when no job skills
-    if job_skills_total == 0:
-        skill_gap_score = 100.0
-    else:
-        skill_gap_score = round((matched_count / job_skills_total) * 100, 2)
-    
-    # ============================================================================
-    # STEP 5: Assemble Result Dictionary
-    # ============================================================================
-    
-    # Build recommendations (empty when job has no skills)
-    if job_skills_total == 0:
-        recommendations = []
-    else:
-        recommendations = build_recommendations(missing_norm, job_display)
+    missing_percent = round(100.0 - coverage_score, 2)
 
     result = {
         "matched_skills": matched_skills,
         "missing_skills": missing_skills,
-        "additional_skills": additional_skills,
-        # convenience alias (normalized form)
-        "extra_skills": additional_skills,
-        # Display-friendly versions (original casing where available)
-        "matched_skills_display": matched_skills_display,
-        "missing_skills_display": missing_skills_display,
-        "additional_skills_display": additional_skills_display,
-        "gap_count": gap_count,
+        "extra_skills": extra_skills,
+        "additional_skills": extra_skills,
+        "matched_skills_display": matched_skills,
+        "missing_skills_display": missing_skills,
+        "additional_skills_display": extra_skills,
+        "extra_skills_display": extra_skills,
         "matched_count": matched_count,
+        "gap_count": gap_count,
         "job_skills_total": job_skills_total,
-        "gap_percentage": round(gap_percentage, 2),
-        "matched_percentage": round(matched_percentage, 2),
-        "coverage_percentage": round(coverage_percentage, 2),
-        "skill_gap_score": skill_gap_score,
-        "recommendations": recommendations,
+        "skill_gap_score": coverage_score,
+        "coverage_score": coverage_score,
+        "coverage_percentage": coverage_score,
+        "matched_percentage": coverage_score,
+        "missing_percent": missing_percent,
+        "gap_percentage": missing_percent,
+        "recommendations": build_recommendations(missing_skills),
+        "cv_skills_normalized": cv_skills_normalized,
+        "job_skills_normalized": job_skills_normalized,
+        "status": status,
+        "note": note,
     }
-    
+
     return result
 
 
-# ============================================================================
-# DEMO / EXAMPLE USAGE
-# ============================================================================
-
 if __name__ == "__main__":
-    print("=" * 70)
-    print("Skill-Gap Analysis Module - Demo")
-    print("=" * 70)
-    
-    # Example 1: Partial Match (50% Coverage)
-    print("\n[Example 1] Partial Match (50% Coverage)")
-    print("-" * 70)
-    result1 = analyze_skill_gap(
-        cv_skills=["Python", "SQL", "Git", "Docker"],
-        job_skills=["Python", "SQL", "AWS", "Kubernetes"]
-    )
-    print(f"CV Skills: {['Python', 'SQL', 'Git', 'Docker']}")
-    print(f"Job Skills: {['Python', 'SQL', 'AWS', 'Kubernetes']}")
-    print(f"\nMatched Skills: {result1['matched_skills']}")
-    print(f"Missing Skills: {result1['missing_skills']}")
-    print(f"Additional Skills: {result1['additional_skills']}")
-    print(f"\nGap Count: {result1['gap_count']}")
-    print(f"Matched Count: {result1['matched_count']}")
-    print(f"Gap Percentage: {result1['gap_percentage']}%")
-    print(f"Coverage Percentage: {result1['coverage_percentage']}%")
-    
-    # Example 2: Perfect Match (100% Coverage)
-    print("\n[Example 2] Perfect Match (100% Coverage)")
-    print("-" * 70)
-    result2 = analyze_skill_gap(
-        cv_skills=["Python", "SQL", "Docker"],
-        job_skills=["Python", "SQL", "Docker"]
-    )
-    print(f"CV Skills: {['Python', 'SQL', 'Docker']}")
-    print(f"Job Skills: {['Python', 'SQL', 'Docker']}")
-    print(f"\nMatched Skills: {result2['matched_skills']}")
-    print(f"Missing Skills: {result2['missing_skills']}")
-    print(f"Gap Percentage: {result2['gap_percentage']}%")
-    print(f"Coverage Percentage: {result2['coverage_percentage']}%")
-    
-    # Example 3: No Match (0% Coverage)
-    print("\n[Example 3] No Match (0% Coverage)")
-    print("-" * 70)
-    result3 = analyze_skill_gap(
-        cv_skills=["Java", "Kotlin", "Gradle"],
-        job_skills=["Python", "SQL", "Docker"]
-    )
-    print(f"CV Skills: {['Java', 'Kotlin', 'Gradle']}")
-    print(f"Job Skills: {['Python', 'SQL', 'Docker']}")
-    print(f"\nMatched Skills: {result3['matched_skills']}")
-    print(f"Missing Skills: {result3['missing_skills']}")
-    print(f"Additional Skills: {result3['additional_skills']}")
-    print(f"Gap Percentage: {result3['gap_percentage']}%")
-    print(f"Coverage Percentage: {result3['coverage_percentage']}%")
-    
-    # Example 4: Case & Whitespace Normalization
-    print("\n[Example 4] Case & Whitespace Normalization")
-    print("-" * 70)
-    result4 = analyze_skill_gap(
-        cv_skills=["PYTHON", " Python ", "python"],
-        job_skills=["Python"]
-    )
-    print(f"CV Skills: {['PYTHON', ' Python ', 'python']}")
-    print(f"Job Skills: {['Python']}")
-    print(f"\nMatched Skills: {result4['matched_skills']}")
-    print(f"Matched Count: {result4['matched_count']} (deduplicated)")
-    print(f"Gap Percentage: {result4['gap_percentage']}%")
-    
-    # Example 5: Empty CV (All Skills Missing)
-    print("\n[Example 5] Empty CV (All Skills Missing)")
-    print("-" * 70)
-    result5 = analyze_skill_gap(
-        cv_skills=[],
-        job_skills=["Python", "AWS", "Docker"]
-    )
-    print(f"CV Skills: {[]}")
-    print(f"Job Skills: {['Python', 'AWS', 'Docker']}")
-    print(f"\nMatched Skills: {result5['matched_skills']}")
-    print(f"Missing Skills: {result5['missing_skills']}")
-    print(f"Gap Percentage: {result5['gap_percentage']}%")
-    
-    print("\n" + "=" * 70)
-    print("Demo Complete")
-    print("=" * 70)
+    demo_result = analyze_skill_gap(["HTML5", "CSS3", "wordpress"], ["HTML", "CSS", "WordPress"])
+    print(demo_result)

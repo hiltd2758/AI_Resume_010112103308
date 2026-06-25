@@ -1,10 +1,18 @@
 
 
+from scoring.skill_gap import normalize_skills
+
+
 def score_skills(cv_skills: list[str], job_skills: list[str]) -> float:
-    if not job_skills:
+    normalized_cv_skills = normalize_skills(cv_skills)
+    normalized_job_skills = normalize_skills(job_skills)
+
+    if not normalized_job_skills:
         return 50.0
-    matched = len(set(cv_skills) & set(job_skills))
-    return (matched / len(job_skills)) * 50
+
+    # Chuẩn hóa trước khi giao tập để không lệch hoa/thường hoặc alias phổ biến.
+    matched = len(set(normalized_cv_skills) & set(normalized_job_skills))
+    return (matched / len(normalized_job_skills)) * 50
 
 
 def score_experience(cv_years: int, required_years: int) -> float:

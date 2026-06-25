@@ -1,6 +1,6 @@
-from core.config import SKILL_KEYWORDS
+from scoring.skill_gap import extract_skills_from_text
 
 
 def extract_skills(text: str) -> list[str]:
-    text_lower = text.lower()
-    return [s for s in SKILL_KEYWORDS if s.lower() in text_lower]
+    # Dùng chung bộ chuẩn hóa của Skill-Gap để tránh parser và scoring lệch nhau.
+    return extract_skills_from_text(text)

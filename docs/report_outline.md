@@ -142,3 +142,46 @@
 - Screenshot demo hệ thống cuối.
 - Danh sách công nghệ.
 - Phân công thành viên.
+
+---
+
+## Module Skill-Gap - Thành viên Hai
+
+### Bài toán
+
+Xác định mức độ kỹ năng trong CV đáp ứng kỹ năng yêu cầu trong JD, tách biệt với điểm LLM/Groq và đủ dễ giải thích khi vấn đáp.
+
+### Thiết kế
+
+- Chuẩn hóa kỹ năng về canonical form.
+- Loại duplicate nhưng giữ thứ tự xuất hiện hợp lý.
+- So sánh deterministic bằng tập kỹ năng đã canonicalize.
+- Tính coverage theo số kỹ năng JD duy nhất.
+- Sinh recommendation rule-based cho từng kỹ năng thiếu.
+
+### Cài đặt
+
+- Module chính: `scoring/skill_gap.py`.
+- Parser dùng chung normalization: `parsing/skill_extractor.py`.
+- Rule-based scorer dùng chung normalization khi tính skill score.
+- Không phụ thuộc Streamlit, Groq, RAG hoặc network.
+
+### Kịch bản demo
+
+1. CV Python/Backend match 100% với Job Python.
+2. CV Front End dùng `HTML5`, `CSS3`, `WordPress` match với Job `HTML`, `CSS`, `WordPress`.
+3. CV Python so với Job Front End trả missing skill rõ ràng, không gây hiểu nhầm là lỗi parser.
+
+### Kết quả test
+
+Test tự động bằng `python -m unittest scoring.test_skill_gap -v`, bao gồm exact match, alias, duplicate, partial match, input rỗng, text enrichment và recommendation.
+
+### Giới hạn
+
+Module hiện dựa trên keyword/alias, chưa thay thế semantic skill matching. Các skill gần nghĩa như `PostgreSQL` và `SQL` chỉ match nếu được định nghĩa alias hoặc taxonomy rõ ràng.
+
+### Định hướng phát triển
+
+- Bổ sung taxonomy skill.
+- Thêm trọng số theo vai trò tuyển dụng.
+- Kết hợp semantic matching như lớp gợi ý, nhưng giữ deterministic coverage làm baseline.
