@@ -1,16 +1,4 @@
-"""
-Unit Tests for Skill-Gap Analysis Module
 
-Tests the analyze_skill_gap() function with comprehensive coverage:
-- Happy path: Perfect match, partial match, no match
-- Edge cases: Empty lists, None values, duplicates
-- Data normalization: Whitespace, case-insensitivity, special characters
-- Output validation: Type checking, range validation
-
-Run: python -m unittest scoring.test_skill_gap -v
-Or:  python -m unittest scoring.test_skill_gap.TestSkillGap -v
-Or:  python scoring/test_skill_gap.py
-"""
 
 import unittest
 from scoring.skill_gap import analyze_skill_gap

@@ -1,8 +1,4 @@
-"""
-Indexer: nối embeddings.py + vector_store.py với CV/JD thật trong hệ thống.
-Việc này giúp Task 3 (tích hợp retrieval vào luồng LLM) chỉ cần gọi search_*,
-không cần biết chi tiết FAISS/embedding bên dưới.
-"""
+
 from rag.embeddings import embed_text, embed_texts
 from rag.vector_store import add_documents, search
 from rag.vector_store import add_documents, search, remove_by_ref_id

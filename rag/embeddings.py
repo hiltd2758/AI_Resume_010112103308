@@ -1,15 +1,4 @@
-"""
-Embedding model + pipeline tạo embedding cho CV/JD (Task 2 - RAG).
 
-Model đã chọn: paraphrase-multilingual-MiniLM-L12-v2 (sentence-transformers)
-Lý do chọn:
-- Hỗ trợ tiếng Việt (multilingual) — CV/JD trong dự án chủ yếu là tiếng Việt.
-- Nhẹ (~120MB), chạy được trên CPU, không cần GPU -> phù hợp máy cá nhân của nhóm.
-- Miễn phí, chạy local, không tốn API quota như embedding qua OpenAI.
-
-Lưu ý: lần chạy đầu tiên cần internet để model tự tải về (cache tại
-~/.cache/huggingface). Từ lần 2 trở đi chạy offline được.
-"""
 from functools import lru_cache
 
 from core.config import EMBEDDING_MODEL_NAME

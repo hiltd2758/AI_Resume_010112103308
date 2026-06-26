@@ -1,4 +1,3 @@
-"""Trang Home - entry point Streamlit (Role: Dũng)."""
 import streamlit as st
 from core.storage import init_db
 

@@ -1,12 +1,4 @@
-"""Skill-Gap Analysis Module
 
-Analyzes the gap between a candidate's CV skills and job requirements.
-Provides metrics on matched skills, missing skills, and gap percentages
-and builds simple, rule-based recommendations for missing skills.
-
-Role: Hai (Backend Developer)
-Dependencies: Only `core.config.SKILL_RECOMMENDATIONS` for mapping (pure Python)
-"""
 
 from typing import List
 

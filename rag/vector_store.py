@@ -1,15 +1,4 @@
-"""
-Setup FAISS vector store cho CV và JD (Task 1 - RAG).
 
-Thiết kế:
-- 2 collection riêng: "cv" và "job" (lưu 2 file index khác nhau), vì khi search
-  ta thường muốn tìm CV liên quan tới 1 JD (hoặc ngược lại), không trộn chung.
-- Dùng IndexFlatIP (Inner Product) trên vector đã normalize -> tương đương cosine
-  similarity, đơn giản và đủ nhanh với quy mô CV/JD của 1 đồ án (vài trăm-vài nghìn
-  document). Không cần index phức tạp (IVF/HNSW) ở quy mô này.
-- Metadata (id, loại, tên/tiêu đề, text gốc) lưu riêng ở file JSON song song với
-  FAISS index, vì FAISS chỉ lưu vector, không lưu được dữ liệu kèm theo.
-"""
 import json
 import os
 
