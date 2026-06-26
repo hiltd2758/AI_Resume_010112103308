@@ -1,4 +1,4 @@
-
+import hashlib
 import json
 import time
 import streamlit as st
@@ -20,7 +20,25 @@ if not jobs:
 job_options = {f"#{j['id']} - {j['title']}": j for j in jobs}
 selected_label = st.selectbox("Chọn Job", list(job_options.keys()))
 job = job_options[selected_label]
-job_skills = json.loads(job["required_skills"])
+# Fix (review trước, V1 pages/3): tránh crash nếu cột NULL
+job_skills = json.loads(job["required_skills"] or "[]")
+
+
+def _job_requirements_hash(job: dict) -> str:
+    """Vấn đề 2 (fix): hash các trường ảnh hưởng đến điểm match.
+    Nếu JD bị sửa (skill/kinh nghiệm yêu cầu thay đổi), hash sẽ khác hash lúc lưu kết quả
+    -> dùng để tự động coi kết quả cũ là 'cần chạy lại' thay vì âm thầm dùng số liệu cũ."""
+    raw = json.dumps(
+        {
+            "required_skills": sorted(s.strip().lower() for s in job_skills),
+            "required_experience_years": job["required_experience_years"],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+current_job_hash = _job_requirements_hash(job)
 
 cvs = list_cvs()
 job_summary_col1, job_summary_col2 = st.columns([2, 1])
@@ -78,51 +96,85 @@ if not cvs:
     st.info("Chưa có CV nào. Vui lòng vào trang Upload CV để thêm ứng viên.")
     st.stop()
 
+# Vấn đề 2 (fix): tách rõ 2 khái niệm "chưa từng chạy" và "JD đã đổi nên kết quả cũ stale"
+results_by_cv = {(r["cv_id"]): r for r in list_results_by_job(job["id"])}
+stale_cv_ids = {
+    cv_id
+    for cv_id, r in results_by_cv.items()
+    if r.get("job_requirements_hash") and r["job_requirements_hash"] != current_job_hash
+}
+
+if stale_cv_ids:
+    st.warning(
+        f"⚠️ Job đã được sửa (kỹ năng/kinh nghiệm yêu cầu thay đổi) sau khi {len(stale_cv_ids)} "
+        "kết quả đã được tính. Các kết quả này đang hiển thị số liệu CŨ — tick 'Chạy lại từ đầu' "
+        "hoặc dùng nút dưới để chỉ chạy lại các CV bị ảnh hưởng."
+    )
+    rerun_stale_only = st.button("🔁 Chỉ chạy lại các CV bị ảnh hưởng bởi thay đổi JD")
+else:
+    rerun_stale_only = False
+
 force_rerun = st.checkbox("Chạy lại từ đầu (kể cả CV đã có kết quả)", value=False)
 run_button = st.button("🔄 Chạy match cho tất cả CV")
 
-if run_button:
-    to_run = cvs if force_rerun else [
-        cv for cv in cvs if get_match_result(cv["id"], job["id"]) is None
-    ]
+if run_button or rerun_stale_only:
+    if rerun_stale_only:
+        to_run = [cv for cv in cvs if cv["id"] in stale_cv_ids]
+    else:
+        to_run = cvs if force_rerun else [
+            cv for cv in cvs if get_match_result(cv["id"], job["id"]) is None
+        ]
     skipped = len(cvs) - len(to_run)
     if not to_run:
         st.info("Không có CV mới cần chạy. Tick ô 'Chạy lại từ đầu' nếu muốn tính lại cho tất cả CV.")
     else:
-        if skipped > 0 and not force_rerun:
+        if skipped > 0 and not force_rerun and not rerun_stale_only:
             st.caption(f"Bỏ qua {skipped} CV đã có kết quả để tránh gọi API trùng. Tick ô trên nếu muốn chạy lại hết.")
 
         progress = st.progress(0, text="Đang tính điểm...")
         for i, cv in enumerate(to_run):
-            cv_skills = json.loads(cv["skills"])
+            cv_skills = json.loads(cv["skills"] or "[]")
             rule_score = calculate_rule_based_score(
                 cv_skills, job_skills, cv["experience_years"], job["required_experience_years"]
             )
             result = get_llm_recommendation(
                 job["description"], cv_skills, cv["experience_years"], cv["raw_text"], rule_score
             )
+            # Vấn đề 1 (fix): phân biệt None (lỗi/không tính được) với 0 (giá trị hợp lệ).
+            # Trước đây dùng "or rule_score" -> final_score=0 (đúng) bị override sai thành rule_score.
+            final_score = result["final_score"] if result.get("final_score") is not None else rule_score
             save_match_result(
                 cv["id"], job["id"], rule_score,
-                result.get("final_score") or rule_score, result.get("pros", ""),
+                final_score, result.get("pros", ""),
                 result.get("cons", ""), result.get("recommendation", ""),
                 result.get("interview_questions", []),
+                job_requirements_hash=current_job_hash,  # lưu kèm hash để detect stale lần sau
             )
             progress.progress((i + 1) / max(len(to_run), 1), text=f"Đã xong {i+1}/{len(to_run)}")
             if i < len(to_run) - 1:
                 time.sleep(DELAY_BETWEEN_CALLS)
         st.success("Đã chạy match xong!")
+        st.rerun()
 
 st.divider()
 results = list_results_by_job(job["id"])
 if results:
     st.subheader("Kết quả match")
+
+    # Vấn đề 3 (fix): tính skill_gap_score 1 lần/CV, dùng lại cho cả dataframe và expander
+    gap_scores_by_cv = {}
+    for r in results:
+        cv_skills_r = json.loads(r["skills"] or "[]")
+        gap_scores_by_cv[r["cv_id"]] = (cv_skills_r, skill_gap_score(cv_skills_r, job_skills))
+
     st.dataframe(
         [
             {
                 "Ứng viên": r["candidate_name"],
                 "% Match": r["final_score"],
                 "Rule-based": r["rule_based_score"],
-                "Skill gap (%)": skill_gap_score(json.loads(r["skills"]), job_skills),
+                "Skill gap (%)": gap_scores_by_cv[r["cv_id"]][1],
+                "⚠️ JD đã đổi": "Có" if r["cv_id"] in stale_cv_ids else "",
             }
             for r in results
         ],
@@ -130,10 +182,13 @@ if results:
     )
 
     for r in results:
-        cv_skills = json.loads(r["skills"])
+        cv_skills, gap_score = gap_scores_by_cv[r["cv_id"]]
         missing = missing_skills(cv_skills, job_skills)
-        gap_score = skill_gap_score(cv_skills, job_skills)
-        with st.expander(f"{r['candidate_name']} — {r['final_score']}% (Rule: {r['rule_based_score']}%)"):
+        stale_note = " ⚠️ (kết quả cũ, JD đã đổi)" if r["cv_id"] in stale_cv_ids else ""
+        with st.expander(f"{r['candidate_name']} — {r['final_score']}% (Rule: {r['rule_based_score']}%){stale_note}"):
+            if r["cv_id"] in stale_cv_ids:
+                st.warning("Job đã được sửa sau khi kết quả này được tính — số liệu dưới đây có thể không còn đúng.")
+
             st.write("**Ưu điểm:**")
             st.write(r["pros"] or "Không có")
             st.write("**Nhược điểm:**")

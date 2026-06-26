@@ -139,7 +139,16 @@ def skill_gap_score(cv_skills: List[str], job_skills: List[str]) -> float:
     result = analyze_skill_gap(cv_skills, job_skills)
     return result["skill_gap_score"]
 
+# Thêm vào cuối phần "Wrapper tương thích..." trong scoring/skill_gap.py,
+# trước dòng "if __name__ == "__main__":"
 
+def normalize_skills(skills: List[str]) -> set:
+    """Chuẩn hoá danh sách skill (lowercase + strip) thành set, dùng chung
+    cho cả skill_gap.py và rule_based_scorer.py để tránh 2 module lệch nhau
+    về cách so khớp skill."""
+    if skills is None:
+        skills = []
+    return {s.strip().lower() for s in skills if s is not None and isinstance(s, str)}
 if __name__ == "__main__":
     result1 = analyze_skill_gap(
         cv_skills=["Python", "SQL", "Git", "Docker"],

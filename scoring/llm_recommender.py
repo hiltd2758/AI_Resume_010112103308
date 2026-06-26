@@ -1,5 +1,6 @@
 """Gọi Groq API để tinh chỉnh điểm + nhận xét + gợi ý câu hỏi PV (Role: Bá)."""
 import json
+import re
 import time
 from core.config import GROQ_API_KEY
 
@@ -19,6 +20,9 @@ Trả về JSON đúng format, không thêm chữ nào khác:
 {{"final_score": 0, "pros": "", "cons": "", "recommendation": "", "interview_questions": []}}
 """
 
+# Vấn đề 2 (fix): regex strip code fence đúng cách, thay cho .strip("```json")
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
 
 def build_prompt(job_description, cv_skills, cv_years, cv_text, rule_score) -> str:
     return PROMPT_TEMPLATE.format(
@@ -28,6 +32,23 @@ def build_prompt(job_description, cv_skills, cv_years, cv_text, rule_score) -> s
         cv_text=cv_text[:1500],  # tránh prompt quá dài, tốn token
         rule_score=rule_score,
     )
+
+
+def _strip_code_fence(text: str) -> str:
+    """Xoá markdown code fence (```json ... ```) đúng cách theo prefix/suffix,
+    KHÔNG dùng .strip(chars) vì nó xoá theo từng ký tự đơn lẻ -> dễ cắt nhầm JSON thật."""
+    return _CODE_FENCE_RE.sub("", text.strip()).strip()
+
+
+def _clamp_score(value):
+    """Vấn đề 3 (fix): clamp final_score về [0, 100]. Trả None nếu không parse được số."""
+    if value is None:
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(100, score))
 
 
 def call_llm(prompt: str) -> dict:
@@ -44,6 +65,8 @@ def call_llm(prompt: str) -> dict:
     client = Groq(api_key=GROQ_API_KEY)
 
     max_retries = 2
+    last_error = None
+
     for attempt in range(max_retries + 1):
         try:
             completion = client.chat.completions.create(
@@ -53,10 +76,31 @@ def call_llm(prompt: str) -> dict:
                 temperature=0.3,
             )
             text = completion.choices[0].message.content.strip()
-            text = text.strip("```json").strip("```")
-            return json.loads(text)
+            text = _strip_code_fence(text)
+
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError as parse_err:
+                # Vấn đề 4 (fix): retry cả lỗi parse JSON, không chỉ rate-limit
+                last_error = parse_err
+                if attempt < max_retries:
+                    time.sleep(2)
+                    continue
+                return {
+                    "final_score": None,
+                    "pros": "",
+                    "cons": "",
+                    "recommendation": f"Không gọi được Groq API (JSONDecodeError sau {max_retries + 1} lần thử), dùng tạm điểm rule-based.",
+                    "interview_questions": [],
+                }
+
+            # Vấn đề 3 (fix): clamp final_score về [0, 100] trước khi trả về
+            result["final_score"] = _clamp_score(result.get("final_score"))
+            return result
+
         except Exception as e:
             is_rate_limit = "429" in str(e) or "rate_limit" in str(e).lower()
+            last_error = e
             if is_rate_limit and attempt < max_retries:
                 time.sleep(10)
                 continue
@@ -67,6 +111,15 @@ def call_llm(prompt: str) -> dict:
                 "recommendation": f"Không gọi được Groq API ({type(e).__name__}), dùng tạm điểm rule-based.",
                 "interview_questions": [],
             }
+
+    # Không nên tới đây, nhưng đảm bảo luôn có return
+    return {
+        "final_score": None,
+        "pros": "",
+        "cons": "",
+        "recommendation": f"Không gọi được Groq API ({type(last_error).__name__ if last_error else 'Unknown'}), dùng tạm điểm rule-based.",
+        "interview_questions": [],
+    }
 
 
 def get_llm_recommendation(job_description, cv_skills, cv_years, cv_text, rule_score) -> dict:
@@ -91,16 +144,32 @@ Hãy trả lời ngắn gọn, dựa trên ngữ cảnh trên. Nếu ngữ cản
 để trả lời, hãy nói rõ là không đủ thông tin, không tự suy diễn thêm.
 """
 
+# Vấn đề 5 (fix): giới hạn tổng độ dài context, tương tự cv_text[:1500] ở build_prompt
+MAX_RAG_CONTEXT_CHARS = 3000
+
 
 def build_rag_context(results: list) -> str:
-    """Định dạng kết quả retrieval (Top-K) thành đoạn text để đưa vào prompt."""
+    """Định dạng kết quả retrieval (Top-K) thành đoạn text để đưa vào prompt.
+    Giới hạn tổng độ dài context để tránh vượt token limit khi top_k lớn."""
     if not results:
         return "(Không tìm được dữ liệu liên quan)"
+
     parts = []
+    total_len = 0
     for i, r in enumerate(results, start=1):
         snippet = (r.get("text") or "")[:600]
         score = r.get("score", 0)
-        parts.append(f"[{i}] {r.get('name', 'Không rõ')} (score={score:.3f})\n{snippet}")
+        part = f"[{i}] {r.get('name', 'Không rõ')} (score={score:.3f})\n{snippet}"
+
+        if total_len + len(part) > MAX_RAG_CONTEXT_CHARS:
+            remaining = MAX_RAG_CONTEXT_CHARS - total_len
+            if remaining > 0:
+                parts.append(part[:remaining] + "...(đã cắt do vượt giới hạn context)")
+            break
+
+        parts.append(part)
+        total_len += len(part)
+
     return "\n\n".join(parts)
 
 
