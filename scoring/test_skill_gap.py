@@ -486,7 +486,7 @@ class TestSkillGapIntegration(unittest.TestCase):
 
     def test_recommendations_fallback_when_unmapped(self):
         """If a missing skill is not in mapping, a fallback recommendation is returned."""
-        result = analyze_skill_gap(cv_skills=[], job_skills=["Elasticsearch"])
+        result = analyze_skill_gap(cv_skills=[], job_skills=["Quantum Computing"])
         self.assertEqual(result["gap_count"], 1)
         self.assertEqual(len(result["recommendations"]), 1)
         self.assertIn("Bổ sung kiến thức", result["recommendations"][0])

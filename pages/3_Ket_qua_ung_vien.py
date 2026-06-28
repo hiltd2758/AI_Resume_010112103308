@@ -3,8 +3,13 @@ import json
 import time
 import streamlit as st
 from core.storage import list_jobs, list_cvs, save_match_result, list_results_by_job, get_match_result
+from scoring.naive_bayes import build_job_model, predict_job_for_cv
 from scoring.rule_based_scorer import calculate_rule_based_score
-from scoring.llm_recommender import get_llm_recommendation, answer_question_about_job
+from scoring.llm_recommender import (
+    get_llm_recommendation,
+    answer_question_about_job,
+    answer_question_about_cv,
+)
 from scoring.skill_gap import missing_skills, skill_gap_score
 
 DELAY_BETWEEN_CALLS = 4
@@ -48,6 +53,7 @@ def _skill_badges(skills: list[str], highlight: set[str], color_hit: str, color_
 current_job_hash = _job_requirements_hash(job)
 
 cvs = list_cvs()
+job_model = build_job_model(list_jobs())
 job_summary_col1, job_summary_col2 = st.columns([2, 1])
 with job_summary_col1:
     st.subheader("Job hiện tại")
@@ -94,6 +100,7 @@ with st.expander("🔎 Hỏi đáp về Job này (RAG)", expanded=False):
                 for i, r in enumerate(rag_result["retrieved"], start=1):
                     st.caption(f"[{i}] {r.get('name', 'Không rõ')} — score={r.get('score', 0):.3f}")
 
+
 if not cvs:
     st.info("Chưa có CV nào. Vui lòng vào trang Upload CV để thêm ứng viên.")
     st.stop()
@@ -134,12 +141,14 @@ def _run_match(cv_list: list):
         result = get_llm_recommendation(
             job["description"], cv_skills, cv["experience_years"], cv["raw_text"], rule_score
         )
+        job_prediction = predict_job_for_cv(cv_skills, cv["raw_text"], job_model)
         final_score = result["final_score"] if result.get("final_score") is not None else rule_score
         save_match_result(
             cv["id"], job["id"], rule_score,
             final_score, result.get("pros", ""),
             result.get("cons", ""), result.get("recommendation", ""),
             result.get("interview_questions", []),
+            job_prediction=job_prediction,
             job_requirements_hash=current_job_hash,
         )
         if i < len(cv_list) - 1:
@@ -235,6 +244,8 @@ for r in results:
         st.write(r["cons"] or "Không có")
         st.write("**Khuyến nghị:**")
         st.write(r["recommendation"] or "Không có")
+        st.write("**Dự đoán Job phù hợp:**")
+        st.write(r.get("job_prediction", "Không có"))
 
         col1, col2 = st.columns([2, 3])
         with col1:
@@ -266,3 +277,34 @@ for r in results:
                 st.write(f"- {q}")
         else:
             st.caption("Không có câu hỏi gợi ý.")
+
+        st.divider()
+        st.subheader("🔎 Hỏi đáp về CV này")
+        rag_question_cv = st.text_input(
+            "Câu hỏi về CV",
+            placeholder="Ví dụ: Ứng viên này phù hợp cho vị trí nào?",
+            key=f"rag_question_cv_{r['cv_id']}",
+        )
+        rag_top_k_cv = st.slider(
+            "Top-K Job làm ngữ cảnh", 1, 10, 3, key=f"rag_top_k_cv_{r['cv_id']}"
+        )
+        if st.button("Hỏi CV", key=f"rag_ask_cv_{r['cv_id']}"):
+            if not rag_question_cv.strip():
+                st.warning("Nhập câu hỏi trước khi bấm Hỏi.")
+            else:
+                with st.spinner("Đang tìm Job liên quan và hỏi LLM..."):
+                    cv_text = r.get("raw_text", "")
+                    cv_result = answer_question_about_cv(rag_question_cv, cv_text, top_k=rag_top_k_cv)
+                if cv_result["retrieval_error"]:
+                    st.warning(
+                        f"Không truy xuất được dữ liệu RAG ({cv_result['retrieval_error']}). "
+                        "Có thể chưa có Job nào được index."
+                    )
+                st.write("**Trả lời:**")
+                st.write(cv_result["answer"])
+                if cv_result["retrieved"]:
+                    st.write("**Nguồn tham khảo:**")
+                    for i, source in enumerate(cv_result["retrieved"], start=1):
+                        st.caption(
+                            f"[{i}] {source.get('name', 'Không rõ')} — score={source.get('score', 0):.3f}"
+                        )

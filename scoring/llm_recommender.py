@@ -25,9 +25,12 @@ _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
 def build_prompt(job_description, cv_skills, cv_years, cv_text, rule_score) -> str:
+    skills_text = (
+        ", ".join(cv_skills) if isinstance(cv_skills, (list, tuple)) else str(cv_skills)
+    )
     return PROMPT_TEMPLATE.format(
         job_description=job_description,
-        cv_skills=cv_skills,
+        cv_skills=skills_text,
         cv_years=cv_years,
         cv_text=cv_text[:1500],  # tránh prompt quá dài, tốn token
         rule_score=rule_score,
@@ -51,10 +54,55 @@ def _clamp_score(value):
     return max(0, min(100, score))
 
 
+def _extract_json_text(text: str) -> str:
+    """Tách JSON object từ output LLM, loại bỏ code fence và dòng thừa."""
+    if not text:
+        return text
+    text = _CODE_FENCE_RE.sub("", text.strip()).strip()
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return text[start : end + 1]
+        return text
+
+
+def _normalize_llm_result(result: dict, rule_score: float) -> dict:
+    """Chuẩn hoá output đầu ra LLM, fallback về rule_score khi cần."""
+    if result is None:
+        result = {}
+
+    final_score = _clamp_score(result.get("final_score"))
+    if final_score is None:
+        final_score = rule_score
+        if not result.get("recommendation"):
+            result["recommendation"] = "Sử dụng điểm rule-based do LLM chưa trả về score hợp lệ."
+    result["final_score"] = final_score
+
+    interview_questions = result.get("interview_questions")
+    if interview_questions is None:
+        result["interview_questions"] = []
+    elif isinstance(interview_questions, str):
+        result["interview_questions"] = [interview_questions]
+    elif isinstance(interview_questions, list):
+        result["interview_questions"] = [str(q) for q in interview_questions if q is not None]
+    else:
+        result["interview_questions"] = [str(interview_questions)]
+
+    for key in ["pros", "cons", "recommendation"]:
+        value = result.get(key)
+        result[key] = "" if value is None else str(value)
+
+    return result
+
+
 def call_llm(prompt: str) -> dict:
     if not GROQ_API_KEY:
         return {
-            "final_score": 0,
+            "final_score": None,
             "pros": "",
             "cons": "",
             "recommendation": "Chưa cấu hình GROQ_API_KEY trong .env",
@@ -76,7 +124,7 @@ def call_llm(prompt: str) -> dict:
                 temperature=0.3,
             )
             text = completion.choices[0].message.content.strip()
-            text = _strip_code_fence(text)
+            text = _extract_json_text(text)
 
             try:
                 result = json.loads(text)
@@ -124,7 +172,8 @@ def call_llm(prompt: str) -> dict:
 
 def get_llm_recommendation(job_description, cv_skills, cv_years, cv_text, rule_score) -> dict:
     prompt = build_prompt(job_description, cv_skills, cv_years, cv_text, rule_score)
-    return call_llm(prompt)
+    result = call_llm(prompt)
+    return _normalize_llm_result(result, rule_score)
 
 
 # ============================================================================
