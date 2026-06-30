@@ -219,6 +219,7 @@ st.dataframe(
     use_container_width=True,
 )
 
+# Vòng lặp lớn hiển thị chi tiết từng CV ứng viên
 for r in results:
     cv_skills, gap_score = gap_scores_by_cv[r["cv_id"]]
     missing = missing_skills(cv_skills, job_skills)
@@ -249,7 +250,6 @@ for r in results:
 
         col1, col2 = st.columns([2, 3])
         with col1:
-            # UX: skill badge màu xanh (có trong JD) / xám (không yêu cầu)
             st.write("**Kỹ năng CV đã phát hiện:**")
             cv_skills_lower = {s.strip().lower() for s in cv_skills}
             matched_lower = cv_skills_lower & job_skills_lower
@@ -260,7 +260,6 @@ for r in results:
         with col2:
             st.write("**Skill gap:**")
             st.metric("Độ phủ kỹ năng", f"{gap_score}%")
-            # UX: skill thiếu dạng badge đỏ
             st.write("**Kỹ năng thiếu so với Job:**")
             if missing:
                 st.markdown(
@@ -293,7 +292,8 @@ for r in results:
                 st.warning("Nhập câu hỏi trước khi bấm Hỏi.")
             else:
                 with st.spinner("Đang tìm Job liên quan và hỏi LLM..."):
-                    cv_text = r.get("raw_text", "")
+                    cv_data_obj = next((c for c in cvs if c["id"] == r["cv_id"]), None)
+                    cv_text = cv_data_obj.get("raw_text", "") if cv_data_obj else ""
                     cv_result = answer_question_about_cv(rag_question_cv, cv_text, top_k=rag_top_k_cv)
                 if cv_result["retrieval_error"]:
                     st.warning(
@@ -304,7 +304,7 @@ for r in results:
                 st.write(cv_result["answer"])
                 if cv_result["retrieved"]:
                     st.write("**Nguồn tham khảo:**")
-                    for i, source in enumerate(cv_result["retrieved"], start=1):
+                    for idx, source in enumerate(cv_result["retrieved"], start=1):
                         st.caption(
-                            f"[{i}] {source.get('name', 'Không rõ')} — score={source.get('score', 0):.3f}"
+                            f"[{idx}] {source.get('name', 'Không rõ')} — score={source.get('score', 0):.3f}"
                         )
